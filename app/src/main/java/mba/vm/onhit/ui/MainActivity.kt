@@ -308,6 +308,10 @@ class MainActivity : Activity() {
     private fun showAddPopupMenu(view: View) {
         val popup = PopupMenu(this, view)
         popup.menu.add(0, 1, 0, R.string.menu_add_folder)
+        
+        // --- 👇 我们新加的一行：生成 NDEF 按钮 (itemId 是 3，显示在中间) ---
+        popup.menu.add(0, 3, 1, "✨ 生成 NDEF 文件")
+
         if (nfcHandler.isEnabled() &&
             pendingImportUri == null) popup.menu.add(0, 2, 2, R.string.import_ndef)
 
@@ -318,6 +322,11 @@ class MainActivity : Activity() {
                     refreshCurrentDir()
                 }
                 2 -> nfcHandler.startRead()
+                
+                // --- 👇 我们新加的点击处理：召唤弹窗 ---
+                3 -> NdefGeneratorDialog.showDialog(this, currentDir) {
+                    refreshCurrentDir() // 用户点击生成并保存成功后，自动刷新文件列表
+                }
             }
             true
         }
