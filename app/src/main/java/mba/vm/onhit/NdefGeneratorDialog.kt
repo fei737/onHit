@@ -1,4 +1,4 @@
-package mba.vm.onhit // ⚠️注意：确认这里的包名和原文件第一行保持一致
+package mba.vm.onhit
 
 import android.app.AlertDialog
 import android.content.Context
@@ -13,31 +13,54 @@ import java.util.*
 
 object NdefGeneratorDialog {
 
-    // 注意这里多加了一个 onSuccess 参数，用来在生成成功后通知主界面刷新
     fun showDialog(context: Context, targetDir: DocumentFile?, onSuccess: () -> Unit) {
         if (targetDir == null) {
             Toast.makeText(context, "请先在主页设置存储目录！", Toast.LENGTH_SHORT).show()
             return
         }
 
-        // 构建弹窗界面
         val layout = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(50, 40, 50, 40)
+            setPadding(60, 40, 60, 40)
         }
 
-        val radioGroup = RadioGroup(context).apply { orientation = LinearLayout.HORIZONTAL }
-        val radioAlipay = RadioButton(context).apply { text = "支付宝"; isChecked = true }
-        val radioCustom = RadioButton(context).apply { text = "自定义" }
+        // --- 核心修复：为单选按钮生成唯一 ID ---
+        val alipayId = View.generateViewId()
+        val customId = View.generateViewId()
+
+        val radioGroup = RadioGroup(context).apply { 
+            orientation = LinearLayout.HORIZONTAL 
+            setPadding(0, 0, 0, 20)
+        }
+        
+        val radioAlipay = RadioButton(context).apply { 
+            id = alipayId
+            text = "支付宝"
+            isChecked = true 
+        }
+        val radioCustom = RadioButton(context).apply { 
+            id = customId
+            text = "自定义" 
+        }
+        
         radioGroup.addView(radioAlipay)
         radioGroup.addView(radioCustom)
 
-        val nameInput = EditText(context).apply { hint = "保存文件名 (留空自动命名)" }
-        val urlInput = EditText(context).apply { hint = "目标链接 (URL)" }
-        val aarInput = EditText(context).apply { hint = "强制唤醒包名 (AAR)"; visibility = View.GONE }
+        val nameInput = EditText(context).apply { hint = "💾 保存文件名 (选填)" }
+        val urlInput = EditText(context).apply { hint = "🌐 目标链接 (URL)" }
+        val aarInput = EditText(context).apply { 
+            hint = "📦 强制唤醒包名 (AAR)"
+            visibility = View.GONE 
+        }
 
+        // --- 修复后的监听逻辑 ---
         radioGroup.setOnCheckedChangeListener { _, checkedId ->
-            aarInput.visibility = if (checkedId == radioCustom.id) View.VISIBLE else View.GONE
+            if (checkedId == customId) {
+                aarInput.visibility = View.VISIBLE
+            } else {
+                aarInput.visibility = View.GONE
+                aarInput.text.clear()
+            }
         }
 
         layout.addView(radioGroup)
@@ -48,7 +71,7 @@ object NdefGeneratorDialog {
         AlertDialog.Builder(context)
             .setTitle("生成 .ndef 文件")
             .setView(layout)
-            .setPositiveButton("生成") { _, _ ->
+            .setPositiveButton("保存") { _, _ ->
                 val rawUrl = urlInput.text.toString().trim()
                 if (rawUrl.isEmpty()) {
                     Toast.makeText(context, "链接不能为空", Toast.LENGTH_SHORT).show()
@@ -69,12 +92,10 @@ object NdefGeneratorDialog {
                         fileName += ".ndef"
                     }
 
-                    // 写入系统目录
                     val newFile = targetDir.createFile("application/octet-stream", fileName)
                     if (newFile != null) {
                         context.contentResolver.openOutputStream(newFile.uri)?.use { it.write(bytes) }
                         Toast.makeText(context, "✅ 生成成功: $fileName", Toast.LENGTH_LONG).show()
-                        // 👇 成功写入文件后，通知主界面刷新列表！
                         onSuccess() 
                     }
                 } catch (e: Exception) {
