@@ -33,6 +33,7 @@ import java.util.Date
 import java.util.Locale
 import java.util.concurrent.Executors
 import kotlin.system.exitProcess
+import mba.vm.onhit.NdefGeneratorDialog
 
 class MainActivity : Activity() {
 
