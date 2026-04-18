@@ -1,6 +1,7 @@
 package mba.vm.onhit.ui
 
 import android.app.Activity
+import android.content.ComponentName
 import android.content.Intent
 import android.net.Uri
 import android.nfc.NdefMessage
@@ -351,7 +352,15 @@ class MainActivity : Activity() {
         val popup = PopupMenu(this, view)
         popup.menu.add(0, 1, 0, R.string.menu_rename)
         popup.menu.add(0, 2, 1, R.string.menu_delete)
-        if (fileData.isNdef && nfcHandler.isEnabled() && pendingImportUri == null) popup.menu.add(0, 3, 2, R.string.menu_write_to_tag)
+
+        // 原有的写入标签选项
+        if (fileData.isNdef && nfcHandler.isEnabled() && pendingImportUri == null) {
+            popup.menu.add(0, 3, 2, R.string.menu_write_to_tag)
+
+            // 👇 我们新增的按钮：紧跟在“写入标签”后面 (itemId 为 99，排序为 3)
+            popup.menu.add(0, 99, 3, "开启外部模拟")
+        }
+
         popup.setOnMenuItemClickListener { item ->
             when (item.itemId) {
                 1 -> DialogHelper.showInputBottomSheet(this, getString(R.string.menu_rename), fileData.name) { newName ->
@@ -373,6 +382,73 @@ class MainActivity : Activity() {
                             }
                         } catch (_: Exception) {
                             Toast.makeText(this, R.string.toast_not_ndef_file, Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                }
+
+                // 👇 我们新增的点击处理逻辑
+                // 👇 全新的带有卡片界面的外部模拟逻辑
+                99 -> {
+                    val file = fileData.documentFile
+                    if (file != null) {
+                        try {
+                            contentResolver.openInputStream(file.uri)?.use { input ->
+                                val bytes = input.readBytes()
+
+                                val dialogView = layoutInflater.inflate(R.layout.dialog_nfc_emulator, null)
+                                val tvFileName = dialogView.findViewById<android.widget.TextView>(R.id.tv_file_name)
+                                val btnStop = dialogView.findViewById<android.widget.Button>(R.id.btn_stop_emulation)
+
+                                tvFileName.text = fileData.name
+
+                                val dialog = android.app.AlertDialog.Builder(this)
+                                    .setView(dialogView)
+                                    .setCancelable(false)
+                                    .create()
+
+                                dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
+
+                                // 注意这里的 this 改成了 this@MainActivity，确保拿到的是当前页面的绝对控制权
+                                val nfcAdapter = android.nfc.NfcAdapter.getDefaultAdapter(this@MainActivity)
+                                val cardEmulation = android.nfc.cardemulation.CardEmulation.getInstance(nfcAdapter)
+                                val componentName = android.content.ComponentName(this@MainActivity, mba.vm.onhit.NdefEmulatorService::class.java)
+
+                                dialog.setOnShowListener {
+                                    // 1. 塞入数据
+                                    mba.vm.onhit.NdefEmulatorService.ndefData = bytes
+
+                                    // (原有的 disable/enable 障眼法代码可以保留，也可以删掉，因为 Xposed 接管了)
+                                    val nfcAdapter = android.nfc.NfcAdapter.getDefaultAdapter(this@MainActivity)
+                                    val cardEmulation = android.nfc.cardemulation.CardEmulation.getInstance(nfcAdapter)
+                                    val componentName = android.content.ComponentName(this@MainActivity, mba.vm.onhit.NdefEmulatorService::class.java)
+                                    cardEmulation.setPreferredService(this@MainActivity, componentName)
+
+                                    // 👇 1. 通知 Xposed 模块：立刻拉起物理屏蔽网！
+                                    val intent = android.content.Intent("mba.vm.onhit.BLOCK_NFC_READER")
+                                    intent.putExtra("block", true)
+                                    sendBroadcast(intent)
+                                }
+
+                                dialog.setOnDismissListener {
+                                    mba.vm.onhit.NdefEmulatorService.ndefData = null
+                                    cardEmulation.unsetPreferredService(this@MainActivity)
+
+                                    // 👇 2. 通知 Xposed 模块：撤销屏蔽，恢复正常读取
+                                    val intent = android.content.Intent("mba.vm.onhit.BLOCK_NFC_READER")
+                                    intent.putExtra("block", false)
+                                    sendBroadcast(intent)
+
+                                    android.widget.Toast.makeText(this@MainActivity, "已停止模拟", android.widget.Toast.LENGTH_SHORT).show()
+                                }
+
+                                btnStop.setOnClickListener {
+                                    dialog.dismiss()
+                                }
+
+                                dialog.show()
+                            }
+                        } catch (e: Exception) {
+                            android.widget.Toast.makeText(this, "读取失败: ${e.message}", android.widget.Toast.LENGTH_SHORT).show()
                         }
                     }
                 }

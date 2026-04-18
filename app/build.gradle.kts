@@ -15,7 +15,7 @@ android {
         minSdk = 26
         targetSdk = 37
         versionCode = getGitCommitCount()
-        versionName = "1.0.8-$currentGitHash"
+        versionName = "1.10-$currentGitHash"
     }
 
     val keystoreFile = rootProject.file(project.findProperty("KEYSTORE_FILE") ?: "key.jks")
@@ -93,6 +93,7 @@ fun getGitShortHash(): String {
 
 dependencies {
     implementation(libs.core)
+    implementation(libs.androidx.cardview)
     compileOnly(libs.xposed.api)
     implementation(libs.ezxhelper.core)
     implementation(libs.ezxhelper.xposed.api)
