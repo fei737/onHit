@@ -1,13 +1,13 @@
 package mba.vm.onhit.ui
 
 import android.app.Activity
-import android.content.ComponentName
 import android.content.Intent
 import android.net.Uri
 import android.nfc.NdefMessage
 import android.os.Build
 import android.os.Bundle
 import android.os.Parcel
+import android.provider.Settings
 import android.text.Editable
 import android.text.TextWatcher
 import android.view.View
@@ -35,6 +35,7 @@ import java.util.Locale
 import java.util.concurrent.Executors
 import kotlin.system.exitProcess
 import mba.vm.onhit.NdefGeneratorDialog
+import mba.vm.onhit.hook.NfcWriter
 
 class MainActivity : Activity() {
 
@@ -46,7 +47,7 @@ class MainActivity : Activity() {
     private var rootDir: DocumentFile? = null
 
     private lateinit var nfcHandler: NfcHandler
-    
+
     private val executor = Executors.newSingleThreadExecutor()
     private var isRefreshing = false
 
@@ -59,7 +60,6 @@ class MainActivity : Activity() {
         handleIntent(intent)
 
         WindowCompat.setDecorFitsSystemWindows(window, false)
-
         setupBackNavigation()
 
         nfcHandler = NfcHandler(this).apply {
@@ -225,7 +225,6 @@ class MainActivity : Activity() {
         binding.tvAppTitle.visibility = View.GONE
         binding.etSearch.visibility = View.VISIBLE
         binding.etSearch.requestFocus()
-        binding.etSearch.requestFocus()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             binding.etSearch.windowInsetsController?.show(WindowInsets.Type.ime())
         } else {
@@ -310,12 +309,11 @@ class MainActivity : Activity() {
     private fun showAddPopupMenu(view: View) {
         val popup = PopupMenu(this, view)
         popup.menu.add(0, 1, 0, R.string.menu_add_folder)
-        
-        // --- 👇 我们新加的一行：生成 NDEF 按钮 (itemId 是 3，显示在中间) ---
-        popup.menu.add(0, 3, 1, "✨ 生成 NDEF 文件")
+        popup.menu.add(0, 3, 1, "生成 NDEF 文件")
 
-        if (nfcHandler.isEnabled() &&
-            pendingImportUri == null) popup.menu.add(0, 2, 2, R.string.import_ndef)
+        if (nfcHandler.isEnabled() && pendingImportUri == null) {
+            popup.menu.add(0, 2, 2, R.string.import_ndef)
+        }
 
         popup.setOnMenuItemClickListener { item ->
             when (item.itemId) {
@@ -324,10 +322,8 @@ class MainActivity : Activity() {
                     refreshCurrentDir()
                 }
                 2 -> nfcHandler.startRead()
-                
-                // --- 👇 我们新加的点击处理：召唤弹窗 ---
                 3 -> NdefGeneratorDialog.showDialog(this, currentDir) {
-                    refreshCurrentDir() // 用户点击生成并保存成功后，自动刷新文件列表
+                    refreshCurrentDir()
                 }
             }
             true
@@ -346,6 +342,15 @@ class MainActivity : Activity() {
         }
     }
 
+    // 💡 离合器统一下发
+    private fun toggleNfcShield(isBlocked: Boolean) {
+        val intent = Intent("mba.vm.onhit.BLOCK_NFC_READER").apply {
+            setPackage("com.android.nfc")
+            putExtra("block", isBlocked)
+        }
+        sendBroadcast(intent)
+    }
+
     private fun showItemPopupMenu(view: View, fileData: FileData) {
         if (pendingImportUri != null) return
         if (fileData.isParent) return
@@ -353,12 +358,10 @@ class MainActivity : Activity() {
         popup.menu.add(0, 1, 0, R.string.menu_rename)
         popup.menu.add(0, 2, 1, R.string.menu_delete)
 
-        // 原有的写入标签选项
         if (fileData.isNdef && nfcHandler.isEnabled() && pendingImportUri == null) {
             popup.menu.add(0, 3, 2, R.string.menu_write_to_tag)
-
-            // 👇 我们新增的按钮：紧跟在“写入标签”后面 (itemId 为 99，排序为 3)
-            popup.menu.add(0, 99, 3, "开启外部模拟")
+            popup.menu.add(0, 4, 3, "开启外部模拟")
+            popup.menu.add(0, 5, 4, "写入卡片")
         }
 
         popup.setOnMenuItemClickListener { item ->
@@ -386,9 +389,10 @@ class MainActivity : Activity() {
                     }
                 }
 
-                // 👇 我们新增的点击处理逻辑
-                // 👇 全新的带有卡片界面的外部模拟逻辑
-                99 -> {
+                // ==========================================
+                // 🚀 选项 4：静默夺取路由版外部模拟
+                // ==========================================
+                4 -> {
                     val file = fileData.documentFile
                     if (file != null) {
                         try {
@@ -398,57 +402,125 @@ class MainActivity : Activity() {
                                 val dialogView = layoutInflater.inflate(R.layout.dialog_nfc_emulator, null)
                                 val tvFileName = dialogView.findViewById<android.widget.TextView>(R.id.tv_file_name)
                                 val btnStop = dialogView.findViewById<android.widget.Button>(R.id.btn_stop_emulation)
-
                                 tvFileName.text = fileData.name
 
                                 val dialog = android.app.AlertDialog.Builder(this)
                                     .setView(dialogView)
                                     .setCancelable(false)
                                     .create()
-
                                 dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
 
-                                // 注意这里的 this 改成了 this@MainActivity，确保拿到的是当前页面的绝对控制权
                                 val nfcAdapter = android.nfc.NfcAdapter.getDefaultAdapter(this@MainActivity)
-                                val cardEmulation = android.nfc.cardemulation.CardEmulation.getInstance(nfcAdapter)
                                 val componentName = android.content.ComponentName(this@MainActivity, mba.vm.onhit.NdefEmulatorService::class.java)
 
                                 dialog.setOnShowListener {
-                                    // 1. 塞入数据
                                     mba.vm.onhit.NdefEmulatorService.ndefData = bytes
+                                    android.util.Log.d("NdefEmulator_Xposed", "已设置 NDEF 数据，大小: ${bytes.size} 字节")
 
-                                    // (原有的 disable/enable 障眼法代码可以保留，也可以删掉，因为 Xposed 接管了)
-                                    val nfcAdapter = android.nfc.NfcAdapter.getDefaultAdapter(this@MainActivity)
+                                    toggleNfcShield(true)
+
+                                    if (nfcAdapter == null) {
+                                        Toast.makeText(this@MainActivity, "无法获取 NFC 适配器", Toast.LENGTH_SHORT).show()
+                                        return@setOnShowListener
+                                    }
+
                                     val cardEmulation = android.nfc.cardemulation.CardEmulation.getInstance(nfcAdapter)
-                                    val componentName = android.content.ComponentName(this@MainActivity, mba.vm.onhit.NdefEmulatorService::class.java)
-                                    cardEmulation.setPreferredService(this@MainActivity, componentName)
+                                    val handler = android.os.Handler(android.os.Looper.getMainLooper())
+                                    var retryCount = 0
 
-                                    // 👇 1. 通知 Xposed 模块：立刻拉起物理屏蔽网！
-                                    val intent = android.content.Intent("mba.vm.onhit.BLOCK_NFC_READER")
-                                    intent.putExtra("block", true)
-                                    sendBroadcast(intent)
+                                    fun attemptSetPreferredService() {
+                                        var ok = false
+                                        try {
+                                            cardEmulation.unsetPreferredService(this@MainActivity)
+                                            ok = cardEmulation.setPreferredService(this@MainActivity, componentName)
+                                        } catch (e: Exception) {
+                                            android.util.Log.e("NdefEmulator_Xposed", "抢占路由异常", e)
+                                        }
+
+                                        if (!ok && retryCount < 3) {
+                                            retryCount++
+                                            handler.postDelayed({ attemptSetPreferredService() }, 300)
+                                            return
+                                        }
+
+                                        if (ok) {
+                                            Toast.makeText(this@MainActivity, "✅ 外部模拟已启动，请靠近读卡器", Toast.LENGTH_SHORT).show()
+                                        }
+                                    }
+
+                                    handler.postDelayed({ attemptSetPreferredService() }, 200)
                                 }
 
                                 dialog.setOnDismissListener {
                                     mba.vm.onhit.NdefEmulatorService.ndefData = null
-                                    cardEmulation.unsetPreferredService(this@MainActivity)
+                                    toggleNfcShield(false)
 
-                                    // 👇 2. 通知 Xposed 模块：撤销屏蔽，恢复正常读取
-                                    val intent = android.content.Intent("mba.vm.onhit.BLOCK_NFC_READER")
-                                    intent.putExtra("block", false)
-                                    sendBroadcast(intent)
+                                    try {
+                                        val cardEmulation = android.nfc.cardemulation.CardEmulation.getInstance(nfcAdapter)
+                                        cardEmulation.unsetPreferredService(this@MainActivity)
+                                    } catch (e: Exception) {}
 
-                                    android.widget.Toast.makeText(this@MainActivity, "已停止模拟", android.widget.Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(this@MainActivity, "已停止模拟", Toast.LENGTH_SHORT).show()
                                 }
 
-                                btnStop.setOnClickListener {
-                                    dialog.dismiss()
+                                btnStop.setOnClickListener { dialog.dismiss() }
+                                dialog.show()
+                            }
+                        } catch (e: Exception) {
+                            Toast.makeText(this, "读取失败: ${e.message}", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                }
+
+                // ==========================================
+                // 🚀 选项 5：实体写入逻辑
+                // ==========================================
+                5 -> {
+                    val file = fileData.documentFile
+                    if (file != null) {
+                        try {
+                            contentResolver.openInputStream(file.uri)?.use { input ->
+                                val bytes = input.readBytes()
+                                val nfcAdapter = android.nfc.NfcAdapter.getDefaultAdapter(this@MainActivity)
+
+                                val dialog = android.app.AlertDialog.Builder(this@MainActivity)
+                                    .setTitle("📡 准备烧录")
+                                    .setMessage("\n请将空白卡或支持写入的卡片贴近手机背面...\n\n(注意：普通的门禁卡和公交卡已加密，请使用 NTAG 白卡)")
+                                    .setCancelable(false)
+                                    .setNegativeButton("取消") { dialogInterface, _ -> dialogInterface.dismiss() }
+                                    .create()
+
+                                dialog.setOnShowListener {
+                                    toggleNfcShield(false)
+                                    android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                                        val flags = android.nfc.NfcAdapter.FLAG_READER_NFC_A or
+                                                android.nfc.NfcAdapter.FLAG_READER_NFC_B or
+                                                android.nfc.NfcAdapter.FLAG_READER_NFC_V or
+                                                android.nfc.NfcAdapter.FLAG_READER_SKIP_NDEF_CHECK
+
+                                        nfcAdapter?.enableReaderMode(this@MainActivity, { tag ->
+                                            val isSuccess = NfcWriter.writeNdefBytesToTag(tag, bytes)
+                                            runOnUiThread {
+                                                if (isSuccess) {
+                                                    Toast.makeText(this@MainActivity, "✅ 烧录成功", Toast.LENGTH_SHORT).show()
+                                                } else {
+                                                    Toast.makeText(this@MainActivity, "❌ 烧录失败：容量不足或被锁定", Toast.LENGTH_SHORT).show()
+                                                }
+                                                dialog.dismiss()
+                                            }
+                                        }, flags, null)
+                                    }, 100)
+                                }
+
+                                dialog.setOnDismissListener {
+                                    nfcAdapter?.disableReaderMode(this@MainActivity)
+                                    Toast.makeText(this@MainActivity, "已退出写卡模式", Toast.LENGTH_SHORT).show()
                                 }
 
                                 dialog.show()
                             }
                         } catch (e: Exception) {
-                            android.widget.Toast.makeText(this, "读取失败: ${e.message}", android.widget.Toast.LENGTH_SHORT).show()
+                            Toast.makeText(this@MainActivity, "读取数据失败: ${e.message}", Toast.LENGTH_SHORT).show()
                         }
                     }
                 }
@@ -474,11 +546,11 @@ class MainActivity : Activity() {
             }
             return
         }
-        
+
         if (isRefreshing) return
         isRefreshing = true
         binding.srlLayout.isRefreshing = true
-        
+
         executor.execute {
             val newList = FileUtils.getFileDataList(this, dir, rootDir)
             runOnUiThread {
@@ -494,13 +566,13 @@ class MainActivity : Activity() {
         val uri = ConfigManager.getRootUri(this) ?: return false
         val hasPermission = contentResolver.persistedUriPermissions.any { it.uri == uri }
         val df = if (hasPermission) DocumentFile.fromTreeUri(this, uri) else null
-        
+
         if (df != null && df.exists() && df.canRead()) {
             rootDir = df
             navigateTo(df)
             return true
         }
-        
+
         Toast.makeText(this, R.string.toast_storage_unavailable, Toast.LENGTH_SHORT).show()
         return false
     }
@@ -534,7 +606,7 @@ class MainActivity : Activity() {
         hideSearch()
         refreshCurrentDir()
     }
-    
+
     override fun onPause() {
         super.onPause()
         nfcHandler.stopDiscovery()
@@ -543,5 +615,8 @@ class MainActivity : Activity() {
     override fun onDestroy() {
         super.onDestroy()
         executor.shutdown()
+        // 🚨 兜底解锁，防止进程意外被杀导致底层卡死
+        toggleNfcShield(false)
+        android.util.Log.d("NdefEmulator", "🧹 页面销毁，已重置物理屏蔽状态")
     }
 }

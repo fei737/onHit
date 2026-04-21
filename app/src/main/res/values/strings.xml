@@ -1,6 +1,7 @@
 <resources>
     <string name="app_name" translatable="false">onHit</string>
     <string name="xposed_desc">Trigger system-trusted NFC events without a physical tag.</string>
+    <string name="ndef_emulation">NDEF Emulation</string>
 
     <string name="setting">Settings</string>
     <string name="add">Add…</string>
