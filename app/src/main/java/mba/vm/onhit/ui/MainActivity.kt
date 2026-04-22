@@ -360,9 +360,12 @@ class MainActivity : Activity() {
 
         if (fileData.isNdef && nfcHandler.isEnabled() && pendingImportUri == null) {
             popup.menu.add(0, 3, 2, R.string.menu_write_to_tag)
-            popup.menu.add(0, 4, 3, "开启外部模拟")
-            popup.menu.add(0, 5, 4, "写入卡片")
+            popup.menu.add(0, 4, 3, "外部模拟")
+            popup.menu.add(0, 5, 4, "烧录写卡")
         }
+
+        // 👇 新增：分享按钮
+        popup.menu.add(0, 6, 5, "推送分享")
 
         popup.setOnMenuItemClickListener { item ->
             when (item.itemId) {
@@ -415,12 +418,12 @@ class MainActivity : Activity() {
 
                                 dialog.setOnShowListener {
                                     mba.vm.onhit.NdefEmulatorService.ndefData = bytes
-                                    android.util.Log.d("NdefEmulator_Xposed", "已设置 NDEF 数据，大小: ${bytes.size} 字节")
+                                    android.util.Log.d("NdefEmulator_Xposed", "已设置NDEF数据，大小: ${bytes.size} 字节")
 
                                     toggleNfcShield(true)
 
                                     if (nfcAdapter == null) {
-                                        Toast.makeText(this@MainActivity, "无法获取 NFC 适配器", Toast.LENGTH_SHORT).show()
+                                        Toast.makeText(this@MainActivity, "无法获取NFC适配器", Toast.LENGTH_SHORT).show()
                                         return@setOnShowListener
                                     }
 
@@ -444,7 +447,7 @@ class MainActivity : Activity() {
                                         }
 
                                         if (ok) {
-                                            Toast.makeText(this@MainActivity, "✅ 外部模拟已启动，请靠近读卡器", Toast.LENGTH_SHORT).show()
+                                            Toast.makeText(this@MainActivity, "外部模拟已启动，请靠近读卡器", Toast.LENGTH_SHORT).show()
                                         }
                                     }
 
@@ -473,7 +476,7 @@ class MainActivity : Activity() {
                 }
 
                 // ==========================================
-                // 🚀 选项 5：实体写入逻辑
+                // 🚀 选项 5：带有固定结果弹窗的“写入实体卡”逻辑
                 // ==========================================
                 5 -> {
                     val file = fileData.documentFile
@@ -483,14 +486,17 @@ class MainActivity : Activity() {
                                 val bytes = input.readBytes()
                                 val nfcAdapter = android.nfc.NfcAdapter.getDefaultAdapter(this@MainActivity)
 
-                                val dialog = android.app.AlertDialog.Builder(this@MainActivity)
-                                    .setTitle("📡 准备烧录")
-                                    .setMessage("\n请将空白卡或支持写入的卡片贴近手机背面...\n\n(注意：普通的门禁卡和公交卡已加密，请使用 NTAG 白卡)")
+                                //1. 创建等待弹窗
+                                val waitDialog = android.app.AlertDialog.Builder(this@MainActivity)
+                                    .setTitle("准备烧录")
+                                    .setMessage("\n请将卡片贴紧手机背面...\n\n")
                                     .setCancelable(false)
-                                    .setNegativeButton("取消") { dialogInterface, _ -> dialogInterface.dismiss() }
+                                    .setNegativeButton("取消") { dialogInterface, _ ->
+                                        dialogInterface.dismiss()
+                                    }
                                     .create()
 
-                                dialog.setOnShowListener {
+                                waitDialog.setOnShowListener {
                                     toggleNfcShield(false)
                                     android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
                                         val flags = android.nfc.NfcAdapter.FLAG_READER_NFC_A or
@@ -499,31 +505,127 @@ class MainActivity : Activity() {
                                                 android.nfc.NfcAdapter.FLAG_READER_SKIP_NDEF_CHECK
 
                                         nfcAdapter?.enableReaderMode(this@MainActivity, { tag ->
+                                            android.util.Log.e("NdefEmulator", "捕捉到实体卡片！开始烧录...")
+
+                                            // 执行底层写卡
                                             val isSuccess = NfcWriter.writeNdefBytesToTag(tag, bytes)
+
+                                            // 🎯 2. 切回主线程，处理 UI 弹窗切换
                                             runOnUiThread {
-                                                if (isSuccess) {
-                                                    Toast.makeText(this@MainActivity, "✅ 烧录成功", Toast.LENGTH_SHORT).show()
-                                                } else {
-                                                    Toast.makeText(this@MainActivity, "❌ 烧录失败：容量不足或被锁定", Toast.LENGTH_SHORT).show()
-                                                }
-                                                dialog.dismiss()
+                                                // 先关闭“准备烧录”弹窗
+                                                waitDialog.dismiss()
+
+                                                // 弹出必须手动点击的“结果”弹窗
+                                                android.app.AlertDialog.Builder(this@MainActivity)
+                                                    .setTitle(if (isSuccess) "写入成功" else "写入失败")
+                                                    .setMessage(if (isSuccess) {
+                                                        "已成功烧录！"
+                                                    } else {
+                                                        "写入失败！"
+                                                    })
+                                                    .setCancelable(false) // 强制必须点击按钮才能关闭
+                                                    .setPositiveButton("确定", null)
+                                                    .show()
                                             }
                                         }, flags, null)
                                     }, 100)
                                 }
 
-                                dialog.setOnDismissListener {
+                                waitDialog.setOnDismissListener {
                                     nfcAdapter?.disableReaderMode(this@MainActivity)
-                                    Toast.makeText(this@MainActivity, "已退出写卡模式", Toast.LENGTH_SHORT).show()
+                                    android.util.Log.d("NdefEmulator", "已退出写卡")
                                 }
 
-                                dialog.show()
+                                waitDialog.show()
                             }
                         } catch (e: Exception) {
-                            Toast.makeText(this@MainActivity, "读取数据失败: ${e.message}", Toast.LENGTH_SHORT).show()
+                            android.widget.Toast.makeText(this@MainActivity, "读取数据失败: ${e.message}", android.widget.Toast.LENGTH_SHORT).show()
                         }
                     }
                 }
+
+                // ==========================================
+                6 -> {
+                    val file = fileData.documentFile
+                    if (file != null) {
+                        try {
+                            contentResolver.openInputStream(file.uri)?.use { input ->
+                                val bytes = input.readBytes()
+                                val ndefMsg = android.nfc.NdefMessage(bytes)
+
+                                // 🎯 1. 内存伪造物理芯片 (保留成功骗过 NFC Tools 的逻辑)
+                                val parcel = android.os.Parcel.obtain()
+                                val mockUid = byteArrayOf(0x04, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66)
+                                parcel.writeInt(mockUid.size)
+                                parcel.writeByteArray(mockUid)
+                                val techList = intArrayOf(1, 8, 6)
+                                parcel.writeInt(techList.size)
+                                parcel.writeIntArray(techList)
+                                val nfcABundle = android.os.Bundle().apply {
+                                    putShort("sak", 0x08.toShort())
+                                    putByteArray("atqa", byteArrayOf(0x04, 0x00))
+                                }
+                                val mifareBundle = android.os.Bundle()
+                                val ndefBundle = android.os.Bundle().apply {
+                                    putParcelable("ndefmsg", ndefMsg)
+                                    putInt("ndefmaxlength", 716)
+                                    putInt("ndefcardstate", 1)
+                                    putInt("ndeftype", 101)
+                                }
+                                parcel.writeTypedArray(arrayOf(nfcABundle, mifareBundle, ndefBundle), 0)
+                                parcel.writeInt(0)
+                                parcel.writeInt(1)
+                                parcel.setDataPosition(0)
+                                val mockTag = android.nfc.Tag.CREATOR.createFromParcel(parcel)
+                                parcel.recycle()
+
+                                // 🎯 2. 定义一个通用的发射器函数
+                                val launchApp = { packageName: String?, useSystemChooser: Boolean ->
+                                    val targetIntent = if (packageName != null) {
+                                        // 【VIP通道】：无视 Manifest 限制，直接找到大门强行推入
+                                        packageManager.getLaunchIntentForPackage(packageName)?.apply {
+                                            action = android.nfc.NfcAdapter.ACTION_NDEF_DISCOVERED
+                                        }
+                                    } else {
+                                        // 【普通通道】：呼叫系统广播寻找接盘侠
+                                        Intent(android.nfc.NfcAdapter.ACTION_NDEF_DISCOVERED).apply { setType("*/*") }
+                                    }
+
+                                    if (targetIntent != null) {
+                                        targetIntent.putExtra(android.nfc.NfcAdapter.EXTRA_NDEF_MESSAGES, arrayOf(ndefMsg))
+                                        targetIntent.putExtra(android.nfc.NfcAdapter.EXTRA_TAG, mockTag)
+                                        targetIntent.putExtra(android.nfc.NfcAdapter.EXTRA_ID, mockUid)
+                                        targetIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+
+                                        if (useSystemChooser) {
+                                            startActivity(Intent.createChooser(targetIntent, "投送至应用"))
+                                        } else {
+                                            startActivity(targetIntent)
+
+                                        }
+                                    } else {
+                                        android.widget.Toast.makeText(this@MainActivity, "未找到该应用", android.widget.Toast.LENGTH_SHORT).show()
+                                    }
+                                }
+
+                                // 🎯 3. 弹出我们自己画的 UI 选择器！
+                                val options = arrayOf("发送至NFC Tools PRO", "更多应用...")
+                                android.app.AlertDialog.Builder(this@MainActivity)
+                                    .setTitle("请选择投送目标")
+                                    .setItems(options) { _, which ->
+                                        when (which) {
+                                            0 -> launchApp("com.wakdev.nfctools.pro", false) // 强制塞给 Pro// 强制塞给 免费版
+                                            1 -> launchApp(null, true)                       // 调出你刚才截图里的系统列表
+                                        }
+                                    }
+                                    .show()
+                            }
+                        } catch (e: Exception) {
+                            android.widget.Toast.makeText(this@MainActivity, "操作失败: ${e.message}", android.widget.Toast.LENGTH_LONG).show()
+                        }
+                    }
+                }
+
             }
             true
         }

@@ -15,16 +15,20 @@ class NdefEmulatorService : HostApduService() {
     private var isCcSelected = false
     private var isNdefSelected = false
 
+    // 标准 NFC Forum Type 4 Tag CC 文件 (15 字节)
     private val CC_FILE = byteArrayOf(
-        0x00, 0x0F,
-        0x20,
-        0x00, 0xFF.toByte(),
-        0x00, 0xFF.toByte(),
-        0x04, 0x06,
-        0xE1.toByte(), 0x04,
-        0x0F, 0xFF.toByte(),
-        0x00,
-        0xFF.toByte()
+        0x00, 0x0F,          // CC 文件总长度
+        0x20,                // 协议版本 (2.0)
+
+        // 🚨 突破极限：将 MLe 和 MLc 改为 04 00 (告诉读卡器我支持 1024 字节单次传输！)
+        0x04, 0x00,          // MLe：最大读取长度 (1024)
+        0x04, 0x00,          // MLc：最大响应长度 (1024)
+
+        0x04, 0x06,          // T(类型) & L(长度)
+        0xE1.toByte(), 0x04, // NDEF 数据文件ID
+        0x0F, 0xFF.toByte(), // 允许的最大容量
+        0x00,                // 读权限
+        0xFF.toByte()        // 写权限
     )
 
     override fun processCommandApdu(commandApdu: ByteArray?, extras: Bundle?): ByteArray {
