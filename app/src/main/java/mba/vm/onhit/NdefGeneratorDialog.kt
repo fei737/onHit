@@ -108,7 +108,9 @@ object NdefGeneratorDialog {
 
     private fun generateAlipayBytes(rawUrl: String): ByteArray {
         val sep = if (rawUrl.contains("?")) "&" else "?"
-        val appendedUrl = rawUrl + sep + "noT=ab"
+        // 每次生成随机追加两个小写字母,如 abxcxvhk / abxcxvsf
+        val randomSuffix = (1..2).map { ('a'..'z').random() }.joinToString("")
+        val appendedUrl = rawUrl + sep + "noT=abxcxv$randomSuffix"
         val deepLink = "alipay://nfc/app?id=10000007&actionType=route&codeContent=" + URLEncoder.encode(appendedUrl, "UTF-8")
         val finalUriStr = "https://render.alipay.com/p/s/ulink/dc0?s=dc&scheme=" + URLEncoder.encode(deepLink, "UTF-8")
         return NdefMessage(arrayOf(
