@@ -76,6 +76,7 @@
     <string name="unknown_error">未知错误</string>
 
     <string name="menu_build_ndef">构建 NDEF</string>
+    <string name="menu_alipay_ndef">生成支付宝标签</string>
 
     <string name="build_ndef_title">构建 NDEF</string>
     <string name="build_ndef_type">类别</string>

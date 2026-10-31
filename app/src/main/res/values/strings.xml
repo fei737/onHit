@@ -76,6 +76,7 @@
     <string name="unknown_error">unknow error</string>
 
     <string name="menu_build_ndef">Build NDEF</string>
+    <string name="menu_alipay_ndef">Generate Alipay Tag</string>
 
     <string name="build_ndef_title">Build NDEF</string>
     <string name="build_ndef_type">Type</string>

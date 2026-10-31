@@ -21,6 +21,7 @@ import androidx.core.view.isGone
 import androidx.core.view.isVisible
 import androidx.documentfile.provider.DocumentFile
 import mba.vm.onhit.Constant
+import mba.vm.onhit.NdefGeneratorDialog
 import mba.vm.onhit.R
 import mba.vm.onhit.ui.helper.TagRecorderStateHelper
 import mba.vm.onhit.databinding.ActivityMainBinding
@@ -292,6 +293,7 @@ class MainActivity : Activity() {
 
         popup.menu.add(0, 1, 0, R.string.menu_add_folder)
         popup.menu.add(0, 3, 1, R.string.menu_build_ndef)
+        popup.menu.add(0, 6, 2, R.string.menu_alipay_ndef)
         if (importController.isImportMode()) {
             popup.menu.add(0, 5, 4, R.string.menu_cancel_import)
         }
@@ -308,6 +310,9 @@ class MainActivity : Activity() {
                 }
                 2 -> nfcHandler.startRead()
                 3 -> launchNdefEditor()
+                6 -> NdefGeneratorDialog.showDialog(this, directoryManager.currentDir) {
+                    directoryManager.refreshCurrentDir()
+                }
                 4 -> sendBroadcast(Intent(Constant.BROADCAST_TOGGLE_TAG_RECORDER_REQUEST))
                 5 -> DialogHelper.showConfirmBottomSheet(
                     this,
